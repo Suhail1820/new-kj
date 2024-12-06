@@ -1,35 +1,51 @@
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: ci-job  # Name of the job
-spec:
-  template:
-    spec:
-      containers:
-        - name: minikube-container
-          image: medyagh/local-dev-example-with-minikube:latest  # Custom image that has kubectl, minikube, etc.
-          command: ["/bin/bash", "-c"]
-          args:
-            - |
-              set -e
-              echo "Starting Minikube..."
-              # Start Minikube (already installed in the container)
-              minikube start --driver=docker
-              echo "Minikube started."
+name: Deploy to Minikube
 
-              # Build the Docker image in Minikube
-              minikube image build -t local/devex:v1 .
-              echo "Image built successfully."
+on:
+  push:
+    branches:
+      - '*'  # Trigger the workflow on pushes to any branch
 
-              # Deploy the Kubernetes application to Minikube
-              kubectl apply -f /deploy/k8s/deployment.yaml
-              kubectl wait --for=condition=ready pod -l app=local-devex
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
 
-              # Test the deployed service
-              MINIKUBE_URL=$(minikube service local-devex-svc --url)
-              echo "Service URL: $MINIKUBE_URL"
-              curl $MINIKUBE_URL
-              echo "Test complete."
+    steps:
+      # Step 1: Checkout code from the repository
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-      restartPolicy: Never  # Do not restart the job
-  backoffLimit: 4  # Retry limit if job fails
+      # Step 2: Install kubectl to interact with Kubernetes
+      - name: Set up kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+
+      # Step 3: Install Minikube on the GitHub runner
+      - name: Set up Minikube
+        run: |
+          curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+          sudo install minikube-linux-amd64 /usr/local/bin/minikube
+
+      # Step 4: Start Minikube on the GitHub runner (using Docker as the driver)
+      - name: Start Minikube
+        run: |
+          minikube start --driver=docker
+
+      # Step 5: Set up the Kubernetes environment (for Minikube)
+      - name: Set up kubectl config
+        run: |
+          mkdir -p $HOME/.kube
+          cp -r $(minikube kubeconfig) $HOME/.kube/config
+          kubectl config use-context minikube
+
+      # Step 6: Deploy the Job to Minikube Kubernetes cluster
+      - name: Deploy Kubernetes Job
+        run: |
+          kubectl apply -f k8s/job.yaml
+          kubectl get jobs
+
+      # Step 7: Wait for the Job to complete (with a 10-minute timeout)
+      - name: Wait for Job to complete
+        run: |
+          kubectl wait --for=condition=complete job/ci-job --timeout=600s
+          kubectl logs job/ci-job
