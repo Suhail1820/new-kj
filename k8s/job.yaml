@@ -1,0 +1,35 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ci-job  # Name of the job
+spec:
+  template:
+    spec:
+      containers:
+        - name: minikube-container
+          image: medyagh/local-dev-example-with-minikube:latest  # Custom image that has kubectl, minikube, etc.
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -e
+              echo "Starting Minikube..."
+              # Start Minikube (already installed in the container)
+              minikube start --driver=docker
+              echo "Minikube started."
+
+              # Build the Docker image in Minikube
+              minikube image build -t local/devex:v1 .
+              echo "Image built successfully."
+
+              # Deploy the Kubernetes application to Minikube
+              kubectl apply -f /deploy/k8s/deployment.yaml
+              kubectl wait --for=condition=ready pod -l app=local-devex
+
+              # Test the deployed service
+              MINIKUBE_URL=$(minikube service local-devex-svc --url)
+              echo "Service URL: $MINIKUBE_URL"
+              curl $MINIKUBE_URL
+              echo "Test complete."
+
+      restartPolicy: Never  # Do not restart the job
+  backoffLimit: 4  # Retry limit if job fails
